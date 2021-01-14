@@ -1,6 +1,7 @@
 # SIMULATION EXPERIMENTS: NON PARAMETRIC TWO-SAMPLE TESTING IN THE 1-DIMENSIONAL CASE
 # -------------------------------------------------------------------------------------
-
+library(parallel)
+set.seed(24)
 
 # HELPER FUNCTIONS
 # Some functions that will be useful throughout
@@ -56,8 +57,17 @@ acceptance_reg <- function(n, alpha=.05) {
 
 # Sigmoid funciton
 #   Input:  x - a vector in R^n
+#           map - which transformation to use
 #   Ouput:  a vector in R^n with norm less than 1
-unit_trans <- function(x) 1 / (1 + exp(-x))
+unit_trans <- function(x, map="tan") {
+  xnorm <- sqrt(sum(x^2))
+  if (map == "tan") {
+    a <- 2 * atan(xnorm) / (pi * xnorm)
+    x * a
+  } else if (map == "norm") {
+    x / (1 + xnorm)
+  }
+}
 
 
 
@@ -113,72 +123,63 @@ wasserstein <- function(x, y, p=2) {
 
 
 # CHECKING POWER
-# We check the power of the proposed tests for two different simulated
-# examples. Significance level is fixed at .05
+# We check the power of the proposed tests for simulated data consisting of normal
+# samples of different mean and variance. Significance level is fixed at .05
 
-# Initializing
+# Example 1 - Normal, different combinations of variances and means
 NUM_SIM <- 200
 alpha <- .05
-nseq <- c(10, 30, 100, 300)
 qsup <- qrbb(1-alpha, p="sup")
 qtwo <- qrbb(1-alpha, p="two")
-
-# Example 1 - Normal, different means 
-res_mean <- as.data.frame(matrix(numeric(length(nseq)*3), ncol=3))
-colnames(res_mean) <- c("Kolmogorov-Smirnov", "Ramdas-Trillos", 
-                        "Wasserstein")
-rownames(res_mean) <- nseq
-mu1 <- 0
-mu2 <- 2
-for (n in nseq) {
-  # Drawing samples and transforming
-  X <- matrix(rnorm(n*NUM_SIM, mean=mu1), nrow=NUM_SIM)
-  Y <- matrix(rnorm(n*NUM_SIM, mean=mu2), nrow=NUM_SIM)
-  Xprime <- as.data.frame(t(unit_trans(X)))
-  Yprime <- as.data.frame(t(unit_trans(Y)))
-  X <- as.data.frame(t(X))
-  Y <- as.data.frame(t(Y))
-  # Calculating statistics
-  KS <- mapply(kolmogorov_smir, X, Y)
-  RT <- mapply(ramdas_trill, X, Y, MoreArgs=list(p="two"))
-  WS <- mapply(wasserstein, Xprime, Yprime, MoreArgs=list(p=1))
-  # Calculating accpetance regions
-  acc_KS <- qsup
-  acc_RT <- qtwo
-  acc_WS <- acceptance_reg(n, alpha)
-  # Performing tests
-  rn <- paste0(n)
-  res_mean[rn, "Kolmogorov-Smirnov"] <- sum(KS >= acc_KS) / NUM_SIM
-  res_mean[rn, "Ramdas-Trillos"] <- sum(RT >= acc_RT) / NUM_SIM
-  res_mean[rn, "Wasserstein"] <- sum(WS >= acc_WS) / NUM_SIM
+nseq <- c(10, 30, 100, 300)
+museq <- c(0, 1, 3, 4)
+sigseq <- c(1, 2, 4, 8)
+theta <- list()
+for (mu in museq){
+  for (sig in sigseq) {
+    theta[[paste0("mu", mu, "sig", sig)]] <- c(mu, sig)
+  }
 }
-
-# Example 2 - Normal, different variances
-res_var <- as.data.frame(matrix(numeric(length(nseq)*3), ncol=3))
-colnames(res_var) <- c("Kolmogorov-Smirnov", "Ramdas-Trillos", 
-                        "Wasserstein")
-rownames(res_var) <- nseq
-sig1 <- 1
-sig2 <- 2
-for (n in nseq) {
-  # Drawing samples and transforming
-  X <- matrix(rnorm(n*NUM_SIM, sd=sig1), nrow=NUM_SIM)
-  Y <- matrix(rnorm(n*NUM_SIM, sd=sig2), nrow=NUM_SIM)
-  Xprime <- as.data.frame(t(unit_trans(X)))
-  Yprime <- as.data.frame(t(unit_trans(Y)))
-  X <- as.data.frame(t(X))
-  Y <- as.data.frame(t(Y))
-  # Calculating statistics
-  KS <- mapply(kolmogorov_smir, X, Y)
-  RT <- mapply(ramdas_trill, X, Y, MoreArgs=list(p="two"))
-  WS <- mapply(wasserstein, Xprime, Yprime, MoreArgs=list(p=1))
-  # Calculating accpetance regions
-  acc_KS <- qsup
-  acc_RT <- qtwo
-  acc_WS <- acceptance_reg(n, alpha)
-  # Performing tests
-  rn <- paste0(n)
-  res_var[rn, "Kolmogorov-Smirnov"] <- sum(KS >= acc_KS) / NUM_SIM
-  res_var[rn, "Ramdas-Trillos"] <- sum(RT >= acc_RT) / NUM_SIM
-  res_var[rn, "Wasserstein"] <- sum(WS >= acc_WS) / NUM_SIM
+# Function for parellelization
+perform_test <- function(par) {
+  mu <- par[1]
+  sig <- par[2]
+  res_tmp <- as.data.frame(matrix(numeric(length(nseq)*4), ncol=4))
+  colnames(res_tmp) <- c("Kolmogorov-Smirnov", "Ramdas-Trillos", 
+                         "Wasserstein, tan", "Wasserstein, norm")
+  rownames(res_tmp) <- nseq
+  for (n in nseq) {
+    # Drawing samples and transforming
+    X <- matrix(rnorm(n*NUM_SIM), nrow=NUM_SIM)
+    Y <- matrix(rnorm(n*NUM_SIM, mu, sig), nrow=NUM_SIM)
+    Xtan <- as.data.frame(t(unit_trans(X, "tan")))
+    Ytan <- as.data.frame(t(unit_trans(Y, "tan")))
+    Xnorm <- as.data.frame(t(unit_trans(X, "norm")))
+    Ynorm <- as.data.frame(t(unit_trans(Y, "norm")))
+    X <- as.data.frame(t(X))
+    Y <- as.data.frame(t(Y))
+    # Calculating statistics
+    KS <- mapply(kolmogorov_smir, X, Y)
+    RT <- mapply(ramdas_trill, X, Y, MoreArgs=list(p="two"))
+    WStan <- mapply(wasserstein, Xtan, Ytan, MoreArgs=list(p=1))
+    WSnorm <- mapply(wasserstein, Xnorm, Ynorm, MoreArgs=list(p=1))
+    # Calculating accpetance regions
+    acc_KS <- qsup
+    acc_RT <- qtwo
+    acc_WS <- acceptance_reg(n, alpha)
+    # Performing tests
+    rn <- paste0(n)
+    res_tmp[rn, "Kolmogorov-Smirnov"] <- sum(KS >= acc_KS) / NUM_SIM
+    res_tmp[rn, "Ramdas-Trillos"] <- sum(RT >= acc_RT) / NUM_SIM
+    res_tmp[rn, "Wasserstein, tan"] <- sum(WStan >= acc_WS) / NUM_SIM
+    res_tmp[rn, "Wasserstein, norm"] <- sum(WSnorm >= acc_WS) / NUM_SIM
+  }
+  res_tmp
+}
+# Running tests
+res <- mclapply(theta, perform_test, mc.cores=8)
+# Writing results to .csv files
+path <- "./results/univariate/sim/"
+for (name in names(res)) {
+  write.csv(res[[name]], paste0(path, name, ".csv"))
 }
