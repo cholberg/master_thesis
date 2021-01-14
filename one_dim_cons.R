@@ -118,7 +118,7 @@ wasserstein <- function(x, y, p=2) {
 
 # CHECKING CONSISTENCY
 # We check the consitency of the proposed tests for two different simulated
-# examples and one real world example. Significance level is fixed at .05
+# examples. Significance level is fixed at .05
 
 # Initializing
 NUM_SIM <- 100
