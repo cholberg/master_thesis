@@ -60,7 +60,7 @@ acceptance_reg <- function(n, alpha=.05) {
 #           map - which transformation to use
 #   Ouput:  a vector in R^n with norm less than 1
 unit_trans <- function(x, map="tan") {
-  xnorm <- sqrt(sum(x^2))
+  xnorm <- abs(x)
   if (map == "tan") {
     a <- 2 * atan(xnorm) / (pi * xnorm)
     x * a
@@ -127,7 +127,7 @@ wasserstein <- function(x, y, p=2) {
 # samples of different mean and variance. Significance level is fixed at .05
 
 # Example 1 - Normal, different combinations of variances and means
-NUM_SIM <- 200
+NUM_SIM <- 5
 alpha <- .05
 qsup <- qrbb(1-alpha, p="sup")
 qtwo <- qrbb(1-alpha, p="two")
@@ -152,12 +152,12 @@ perform_test <- function(par) {
     # Drawing samples and transforming
     X <- matrix(rnorm(n*NUM_SIM), nrow=NUM_SIM)
     Y <- matrix(rnorm(n*NUM_SIM, mu, sig), nrow=NUM_SIM)
-    Xtan <- as.data.frame(t(unit_trans(X, "tan")))
-    Ytan <- as.data.frame(t(unit_trans(Y, "tan")))
-    Xnorm <- as.data.frame(t(unit_trans(X, "norm")))
-    Ynorm <- as.data.frame(t(unit_trans(Y, "norm")))
     X <- as.data.frame(t(X))
     Y <- as.data.frame(t(Y))
+    Xtan <- unit_trans(X, "tan")
+    Ytan <- unit_trans(Y, "tan")
+    Xnorm <- unit_trans(X, "norm")
+    Ynorm <- unit_trans(Y, "norm")
     # Calculating statistics
     KS <- mapply(kolmogorov_smir, X, Y)
     RT <- mapply(ramdas_trill, X, Y, MoreArgs=list(p="two"))
