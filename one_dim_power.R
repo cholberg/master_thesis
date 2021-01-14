@@ -127,7 +127,7 @@ wasserstein <- function(x, y, p=2) {
 # samples of different mean and variance. Significance level is fixed at .05
 
 # Example 1 - Normal, different combinations of variances and means
-NUM_SIM <- 5
+NUM_SIM <- 200
 alpha <- .05
 qsup <- qrbb(1-alpha, p="sup")
 qtwo <- qrbb(1-alpha, p="two")
