@@ -55,7 +55,7 @@ acceptance_reg <- function(n, alpha=.05) {
   2*R + sqrt(log(1/alpha)/n)
 }
 
-# Sigmoid funciton
+# Transformation mapping R^n to unit ball
 #   Input:  x - a vector in R^n
 #           map - which transformation to use
 #   Ouput:  a vector in R^n with norm less than 1
@@ -73,8 +73,8 @@ unit_trans <- function(x, map="tan") {
 
 
 # TEST-STATISTICS
-# We create functions that perform the calculate the test-statiscs we want to compare.
-# They take as input two samples X and Y (assumed to be of equal size for simplicity),
+# Functions that calculate the test-statiscs we want to compare.
+# They take as input two samples X and Y (assumed to be of equal size for simplicity)
 # and potentially some hyperparameters
 
 # Kolmogorov-Smirnov
@@ -122,7 +122,7 @@ wasserstein <- function(x, y, p=2) {
 
 
 
-# CHECKING POWER
+# ESTIMATING POWER
 # We check the power of the proposed tests for simulated data consisting of normal
 # samples of different mean and variance. Significance level is fixed at .05
 
