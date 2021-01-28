@@ -4,6 +4,10 @@ SEED <- 24
 set.seed(SEED)
 options(future.globals.maxSize= 1000*1024^2)
 
+
+# TEST BASDE ON LARGE DEVIATION BOUND
+# -------------------------------------------------------------------
+
 # LOCATION
 
 # Fixed n=300
@@ -70,5 +74,8 @@ names(res_mmd) <- dirs
 write.csv(data.frame(res_mmd), "./results/multivariate/sim/scale/mmd.csv")
 
 
+
+# TEST BASDE ON PERMUTATION
+# -------------------------------------------------------------------
 
 

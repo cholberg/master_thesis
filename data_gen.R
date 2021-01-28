@@ -4,10 +4,12 @@ library(MASS)
 SEED = 24
 set.seed(SEED)
 GLOBAL_PATH = "/Users/christianholberg/Documents/ETH Documents/Thesis/simulations/main/data/"
+
+
 # Multivariate Location - fixed n 
 # P = Gaussian centered at (0, 0,...), Id variance
 # Q = Gaussian centered at (log(d), 0,...), Id variance 
-path <- paste0(GLOBAL_PATH, "multivariate/deviation/location/dim")
+path <- paste0(GLOBAL_PATH, "multivariate/perm/location/dim")
 NSIM <- 100
 n <- 300
 dseq <- seq(2, 70, by=2)
@@ -21,6 +23,7 @@ for (d in dseq) {
     write.csv(dat, paste0(filename, "num", k, ".csv"), row.names=FALSE)
   }
 }
+
 
 # Multivariate Scale - fixed n
 # P = Gaussian centered at (0, 0,...), Id variance
