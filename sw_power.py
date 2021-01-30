@@ -21,7 +21,7 @@ def acc_region(n, alpha=0.05):
     return 2 * R + np.sqrt(np.log(1 / alpha) / n)
 
 
-def test_wr(path):
+def test_toy_wr(path):
     files = os.listdir(path)
     NUMsim = len(files)
     dat = []
@@ -36,11 +36,32 @@ def test_wr(path):
     return np.sum(np.greater(sw, c)) / NUMsim
 
 
-def read_data(path):
+def test_cancer_wr(dat):
+    np.random.seed()
+    a, b = np.random.randint(0, 2, 2)
+    x = unitt(
+        torch.tensor(dat.loc[dat.label == a].sample(10).values, dtype=torch.float)
+    )
+    y = unitt(
+        torch.tensor(dat.loc[dat.label == b].sample(10).values, dtype=torch.float)
+    )
+    stat = gsw.GSW(use_cuda=False)
+    t = stat.gsw(x, y)
+    c = acc_region(10)
+    return [int(t >= c), int(a == b)]
+
+
+def read_toy_data(path):
     _, dirs, _ = next(os.walk(path))
     dirs = sorted(dirs)
     dirs = [path + d + "/" for d in dirs]
     return dirs
+
+
+def process_results(arr):
+    same = arr[arr[:, 1] == 1, 0]
+    diff = arr[arr[:, 1] == 0, 0]
+    return [np.mean(same), np.mean(diff)]
 
 
 def main():
@@ -51,9 +72,9 @@ def main():
     # Q = Gaussian centered at (log(d), 0,...), Id variance
     print("Running test: LOCATION, FIXED SIZE")
     path = "./data/multivariate/deviation/location/"
-    dirs = read_data(path)
+    dirs = read_toy_data(path)
     with Pool(NUMcores) as p:
-        res_sw = p.map(test_wr, dirs)
+        res_sw = p.map(test_toy_wr, dirs)
     res_sw = pd.DataFrame({"res_sw": res_sw}, index=dirs)
     res_sw.to_csv("./results/multivariate/sim/location/sw.csv")
     print("Done")
@@ -63,11 +84,27 @@ def main():
     # Q = Gaussian centered at (0, 0,...), diag(10*log(d), 1,...) variance
     print("Running test: SCALE, FIXED SIZE")
     path = "./data/multivariate/deviation/scale/"
-    dirs = read_data(path)
+    dirs = read_toy_data(path)
     with Pool(NUMcores) as p:
-        res_sw = p.map(test_wr, dirs)
+        res_sw = p.map(test_toy_wr, dirs)
     res_sw = pd.DataFrame({"res_sw": res_sw}, index=dirs)
     res_sw.to_csv("./results/multivariate/sim/scale/sw.csv")
+    print("Done")
+
+    # Data integration test
+    # Microrarray data of cell tissues infected with cancer
+    # n = 10 and d = 2135, 7129, 47293
+    print("Running test: DATA INTEGRATION")
+    path = "./data/cancer/"
+    dat_names = ["breast", "prostate", "dlbcl"]
+    res_dict = {}
+    for n in dat_names:
+        dat = pd.read_csv(path + n + ".csv")
+        with Pool(NUMcores) as p:
+            res = np.array(p.starmap(test_cancer_wr, [(dat,) for _ in range(200)]))
+        res_dict[n] = process_results(res)
+    res_msw = pd.DataFrame(res_dict, index=["same", "diff"])
+    res_msw.to_csv("./results/multivariate/cancer/sw.csv")
     print("Done")
 
 

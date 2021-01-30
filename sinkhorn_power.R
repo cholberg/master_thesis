@@ -1,8 +1,14 @@
+# NOTE THAT THIS CODE IS INTEDED TO RUN ON THE THE ETH EULER CLUSTER FOR 
+# SCIENTIFIC COMPUTING. AS SUCH, IT IS NOT SUITED FOR LOCAL EXECUTION. 
+# SINCE PERMUTATION TESTS INVOLVE A HIGH NUMBER OF REPETITIVE COMPUTATIONS, 
+# BELOW CODE IS RIPE WITH OPPURTUNITIES FOR PARALLELIZATION.
+# --------------------------------------------------------------------------
 library(parallel)
 library(MASS)
 library(kernlab)
 SEED <- 24
 set.seed(SEED)
+
 
 
 # Funciton for calculating cost matrix for any two empirical measures
@@ -27,17 +33,21 @@ ent_ot <- function(C, eps=1, del=0.01) {
   m <- ncol(C)
   f <- numeric(n)
   g <- numeric(m)
-  f_prev <- rep(1, n)
-  g_prev <- rep(1, m)
-  dist <- sum(abs(f - f_prev)) + sum(abs(g - g_prev))
-  while (dist > del) {
-    f <- sapply(seq(n), function(i) -eps*log(sum(exp(g/eps - C[i,]/eps)/m)))
-    g <- sapply(seq(m), function(j) -eps*log(sum(exp(f/eps - C[,j]/eps)/n)))
-    dist <- sum(abs(f - f_prev)) + sum(abs(g - g_prev))
-    f_prev <- f
-    g_prev <- g
+  ot <- sum(f)/n + sum(g)/m
+  ot_prev <- 1
+  d <- abs(ot-ot_prev)
+  while (d > del) {
+    ot_prev <- ot
+    f <- sapply(seq(n), function(i) {
+      -eps*log(sum(exp(log(1/m) + g/eps - C[i,]/eps)))
+    })
+    g <- sapply(seq(m), function(j) {
+      -eps*log(sum(exp(log(1/n) + f/eps - C[,j]/eps)/n))
+    })
+    ot <- sum(f)/n + sum(g)/m
+    d <- abs(ot-ot_prev)
   }
-  sum(f)/n + sum(g)/m
+  ot
 }
 
 
@@ -50,16 +60,18 @@ ent_ot <- function(C, eps=1, del=0.01) {
 ent_ot_id <- function(C, eps=1, del=0.01) {
   n <- nrow(C)
   f <- numeric(n)
-  f_prev <- rep(1, n)
-  dist <- sum(abs(f - f_prev))
-  while (dist > del) {
+  ot <- 2 * sum(f)/n
+  ot_prev <- 1
+  d <- abs(ot - ot_prev)
+  while (d > del) {
+    ot_prev <- ot
     f <- sapply(seq(n), function(i) {
       (f[i] - eps*log(sum(exp(f/eps - C[i,]/eps)/n)))/2
     })
-    dist <- sum(abs(f - f_prev))
-    f_prev <- f
+    ot <- 2 * sum(f)/n
+    d <- abs(ot - ot_prev)
   }
-  2 * sum(f)/n
+  ot
 }
 
 
@@ -96,14 +108,15 @@ sinkperm <- function(x, y, alph=.05, eps=1, del=0.01, N=1000) {
     rbind(x, y),
     function(x, y) sqrt(sum((x-y)^2))
     )
+  C <- C / max(C) # for stabilizing purposes (does not affect result)
   s <- sinkhorn(
     C[1:n, (n+1):(n+m)], 
     C[1:n, 1:n], 
     C[(n+1):(n+m), (n+1):(n+m)], 
     eps, 
     del
-    )^2 * (m*n/(m+n))
-  perm <- lapply(numeric(N), function(x) sample(n+m, replace=FALSE))
+    )
+  perm <- lapply(numeric(N), function(i) sample(n+m, replace=FALSE))
   sstar <- unlist(lapply(perm, function(p) {
     sinkhorn(
       C[p[1:n], p[(n+1):(n+m)]], 
@@ -111,7 +124,7 @@ sinkperm <- function(x, y, alph=.05, eps=1, del=0.01, N=1000) {
       C[p[(n+1):(n+m)], p[(n+1):(n+m)]],
       eps,
       del
-      )^2 * (m*n/(m+n))
+      )
   }))
   q <- quantile(sstar, 1-alph)
   r <- as.numeric(s >= q)
@@ -147,6 +160,30 @@ mmdperm <- function(x, y, alph=.05, N=1000) {
 }
 
 
+# Function for processing the results in the third simulation experiment below.
+# Input:    res - a list of vectors of the size k
+# Output:   a 2 x (k-1) dataframe
+process_results <- function(res) {
+  k <- length(res[[1]])
+  res_mat <- matrix(unlist(res), ncol=k, byrow=TRUE)
+  res_same <- res_mat[res_mat[,k]==1, 1:(k-1)]
+  res_same <- res_same / NROW(res_same)
+  res_diff <- res_mat[res_mat[,k]==0, 1:(k-1)]
+  res_diff <- res_diff / NROW(res_diff)
+  res_out <- rbind(apply(res_same, 2, sum), apply(res_diff, 2, sum))
+  colnames(res_out) <- c(
+    "sinkhorn0.1", 
+    "sinkhorn1", 
+    "sinkhorn10", 
+    "sinkhorn100",
+    "sinkhorn1000",
+    "mmd"
+  )
+  rownames(res_out) <- c("same", "different")
+  res_out
+}
+
+
 
 # POWER: LOCATION
 # Fixed n=200
@@ -163,10 +200,10 @@ test_wr <- function(dseq, n) {
   y <- mvrnorm(n, c(1, numeric(dmax-1)), diag(dmax))
   run_test <- function(d) {
     c(
-      sinkperm(x[, 1:d], y[, 1:d], alph=.05, 0.1, N=500)$res,
-      sinkperm(x[, 1:d], y[, 1:d], alph=.05, 1, N=500)$res,
-      sinkperm(x[, 1:d], y[, 1:d], alph=.05, 10, N=500)$res,
-      sinkperm(x[, 1:d], y[, 1:d], alph=.05, 100, N=500)$res,
+      sinkperm(x[, 1:d], y[, 1:d], alph=.05, eps=0.1, N=500)$res,
+      sinkperm(x[, 1:d], y[, 1:d], alph=.05, eps=1, N=500)$res,
+      sinkperm(x[, 1:d], y[, 1:d], alph=.05, eps=10, N=500)$res,
+      sinkperm(x[, 1:d], y[, 1:d], alph=.05, eps=100, N=500)$res,
       mmdperm(x[, 1:d], y[, 1:d], alph=.05, N=500)$res
       )
   }
@@ -213,10 +250,10 @@ test_wr <- function(dseq, n) {
   y <- mvrnorm(n, numeric(dmax), diag(c(4, rep(1, dmax-1))))
   run_test <- function(d) {
     c(
-      sinkperm(x[, 1:d], y[, 1:d], alph=.05, 0.1, N=500)$res,
-      sinkperm(x[, 1:d], y[, 1:d], alph=.05, 1, N=500)$res,
-      sinkperm(x[, 1:d], y[, 1:d], alph=.05, 10, N=500)$res,
-      sinkperm(x[, 1:d], y[, 1:d], alph=.05, 100, N=500)$res,
+      sinkperm(x[, 1:d], y[, 1:d], alph=.05, eps=0.1, N=500)$res,
+      sinkperm(x[, 1:d], y[, 1:d], alph=.05, eps=1, N=500)$res,
+      sinkperm(x[, 1:d], y[, 1:d], alph=.05, eps=10, N=500)$res,
+      sinkperm(x[, 1:d], y[, 1:d], alph=.05, eps=100, N=500)$res,
       mmdperm(x[, 1:d], y[, 1:d], alph=.05, N=500)$res
     )
   }
@@ -245,3 +282,36 @@ colnames(res) <- c(
 )
 rownames(res) <- dseq
 write.csv(res, row.names=TRUE)
+
+
+
+# DATA INTEGRATION
+# We test the usefulness in data integration tasks for 3 different 
+# tumor microarray datasets
+test_wr <- function(dat) {
+  a <- sample(c(0, 1), 2, replace=TRUE)
+  x <- dat[dat["label"]==a[1],]
+  x <- as.matrix(x[sample(nrow(x), 10),])
+  y <- dat[dat["label"]==a[2],]
+  y <- as.matrix(y[sample(nrow(y), 10),])
+  c(
+    sinkperm(x, y, alph=.05, 0.1, N=500)$res,
+    sinkperm(x, y, alph=.05, 1, N=500)$res,
+    sinkperm(x, y, alph=.05, 10, N=500)$res,
+    sinkperm(x, y, alph=.05, 100, N=500)$res,
+    sinkperm(x, y, alph=.05, 1000, N=500)$res,
+    mmdperm(x, y, alph=.05, N=500)$res,
+    as.numeric(a[1]==a[2])
+  )
+}
+
+dat_names <- c("breast", "prostate", "dlbcl")
+for (n in dat_names) {
+  dat <- read.csv(paste0("./", n, ".csv"))
+  invisible(capture.output(
+    res <- process_results(
+      mclapply(1:300, function(i) test_wr(dat), mc.cores=40)
+      )
+    ))
+  write.csv(res, row.names=TRUE)
+}
