@@ -1,7 +1,9 @@
 # SIMULATION EXPERIMENTS: NON PARAMETRIC TWO-SAMPLE TESTING IN THE 1-DIMENSIONAL CASE
 # -------------------------------------------------------------------------------------
 library(parallel)
+library(boot)
 set.seed(24)
+GLOBAL_PATH <- "/Users/christianholberg/Documents/ETH Documents/Thesis/simulations/main"
 
 # HELPER FUNCTIONS
 # Some functions that will be useful throughout
@@ -45,30 +47,22 @@ qrbb <- function(q, p="two", nsim=1e+5) {
   quantile(B, q)
 }
 
-# Calculating acceptance region for test 1-Wasserstein distance
-#   Input:  n - size of samples, natural number greater than 2
-#           alpha - significance level, number between 0 and 1
-#   Ouput:  a scalar greater than 0
-acceptance_reg <- function(n, alpha=.05) {
-  nf<- floor(n/2)
-  R <- choose(2*nf, nf)/(4^nf)
-  2*R + sqrt(log(1/alpha)/n)
-}
-
-# Transformation mapping R^n to unit ball
-#   Input:  x - a vector in R^n
-#           map - which transformation to use
-#   Ouput:  a vector in R^n with norm less than 1
-unit_trans <- function(x, map="tan") {
-  xnorm <- abs(x)
-  if (map == "tan") {
-    a <- 2 * atan(xnorm) / (pi * xnorm)
-    x * a
-  } else if (map == "norm") {
-    x / (1 + xnorm)
+# Calculating quantiles for the asymptotic distribution of the test statistic
+# based on the 2-Wasserstein distance using the bootstrap.
+#   Input:  q - probability, number between 0 and 1
+#           x - sample 1, vector of size n
+#           y - sample 2, vector of size m
+#           stat - test statistic, function of two samples
+#           nsim - number of bootstrap simulations
+#   Output: a scalar greater than 0
+qboot <- function(q, x, y, stat, nsim=1000) {
+  n <- length(x)
+  m <- length(y)
+  stat_wr <- function(dat, indices) {
+    stat(dat[indices[1:n]], dat[indices[(n+1):(n+m)]])
   }
+  quantile(boot(c(x, y), stat_wr, nsim)$t, q)
 }
-
 
 
 
@@ -116,7 +110,7 @@ wasserstein <- function(x, y, p=2) {
   n <- length(x)
   xs <- sort(x)
   ys <- sort(y)
-  sum(abs(xs-ys)^2)^(1/p) / n
+  (n/2) * (sum(abs(xs-ys)^2)^(1/p) / n)
 }
 
 
@@ -144,9 +138,8 @@ for (mu in museq){
 perform_test <- function(par) {
   mu <- par[1]
   sig <- par[2]
-  res_tmp <- as.data.frame(matrix(numeric(length(nseq)*4), ncol=4))
-  colnames(res_tmp) <- c("Kolmogorov-Smirnov", "Ramdas-Trillos", 
-                         "Wasserstein, tan", "Wasserstein, norm")
+  res_tmp <- as.data.frame(matrix(numeric(length(nseq)*3), ncol=3))
+  colnames(res_tmp) <- c("Kolmogorov-Smirnov", "Ramdas-Trillos", "2-Wasserstein")
   rownames(res_tmp) <- nseq
   for (n in nseq) {
     # Drawing samples and transforming
@@ -154,32 +147,26 @@ perform_test <- function(par) {
     Y <- matrix(rnorm(n*NUM_SIM, mu, sig), nrow=NUM_SIM)
     X <- as.data.frame(t(X))
     Y <- as.data.frame(t(Y))
-    Xtan <- unit_trans(X, "tan")
-    Ytan <- unit_trans(Y, "tan")
-    Xnorm <- unit_trans(X, "norm")
-    Ynorm <- unit_trans(Y, "norm")
     # Calculating statistics
     KS <- mapply(kolmogorov_smir, X, Y)
     RT <- mapply(ramdas_trill, X, Y, MoreArgs=list(p="two"))
-    WStan <- mapply(wasserstein, Xtan, Ytan, MoreArgs=list(p=1))
-    WSnorm <- mapply(wasserstein, Xnorm, Ynorm, MoreArgs=list(p=1))
+    W <- mapply(wasserstein, X, Y)
     # Calculating accpetance regions
     acc_KS <- qsup
     acc_RT <- qtwo
-    acc_WS <- acceptance_reg(n, alpha)
+    acc_W <- mapply(qboot, X, Y, MoreArgs=list(q=1-alpha, stat=wasserstein))
     # Performing tests
     rn <- paste0(n)
     res_tmp[rn, "Kolmogorov-Smirnov"] <- sum(KS >= acc_KS) / NUM_SIM
     res_tmp[rn, "Ramdas-Trillos"] <- sum(RT >= acc_RT) / NUM_SIM
-    res_tmp[rn, "Wasserstein, tan"] <- sum(WStan >= acc_WS) / NUM_SIM
-    res_tmp[rn, "Wasserstein, norm"] <- sum(WSnorm >= acc_WS) / NUM_SIM
+    res_tmp[rn, "2-Wasserstein"] <- sum(W >= acc_W) /NUM_SIM
   }
   res_tmp
 }
 # Running tests
 res <- mclapply(theta, perform_test, mc.cores=8)
 # Writing results to .csv files
-path <- "./results/univariate/sim/"
+path <- paste0(GLOBAL_PATH, "/results/univariate/sim/")
 for (name in names(res)) {
   write.csv(res[[name]], paste0(path, name, ".csv"))
 }
