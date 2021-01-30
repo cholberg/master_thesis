@@ -9,7 +9,7 @@ GLOBAL_PATH = "/Users/christianholberg/Documents/ETH Documents/Thesis/simulation
 # Multivariate Location - fixed n 
 # P = Gaussian centered at (0, 0,...), Id variance
 # Q = Gaussian centered at (log(d), 0,...), Id variance 
-path <- paste0(GLOBAL_PATH, "multivariate/perm/location/dim")
+path <- paste0(GLOBAL_PATH, "multivariate/deviation/location/dim")
 NSIM <- 100
 n <- 300
 dseq <- seq(2, 70, by=2)
