@@ -6,6 +6,9 @@
 library(parallel)
 library(MASS)
 library(kernlab)
+library(transport)
+library(lpSolve)
+library(LaplacesDemon)
 SEED <- 24
 set.seed(SEED)
 
@@ -89,9 +92,58 @@ sinkhorn <- function(C, Cx, Cy, eps=1, del=0.01) {
 }
 
 
+# Function for calculating squared Wasserstein dist. between any two empirical measures
+# Input:    C - n x m cost matrix
+#           p - order of distance
+# Output:   wasserstein distance, a real number greater than 0
+wasser <- function(C) {
+  # solving opt. assignment problem
+  lp_sol <- lp.assign(C)
+  lp_obj <- lp_sol$objval
+  # computing optimal cost
+  (1/nrow(C)) * lp_obj
+}
+
+
+# One dimensional projected 2-Wasserstein distance
+#   Input:  x - sample, n x d matrix
+#           y - sample, n x d matrix
+#           theta - projection, vector in R^d
+#   Output: a scalar greater than 0
+pw <- function(x, y, theta) {
+  # projecting samples + sorting
+  x_s <- sort(x %*% theta)
+  y_s <- sort(y %*% theta)
+  # computing Wasserstein distance
+  sum(abs(x_s-y_s)^2) / length(x_s)
+}
+
+
+# Function for sampling from (d-1)-dim unit sphere
+#   Input:  n - number of samples
+#           d - dimension
+#   Output: n x d matrix where each row is on the unit sphere
+runis <- function(n, d) {
+  out <- matrix(numeric(n*d), nrow=n)
+  for (i in 1:n) {
+    obs <- rnorm(d)
+    out[i,] <- obs / sqrt(sum(obs^2))
+  }
+  out
+}
+
+
+# Sliced 2-Wasserstein distance
+sliced_wasser <- function(x, y, L=1000) {
+  n <- dim(x)[1]
+  d <- dim(x)[2]
+  theta <- runis(L, d)
+  sum(apply(theta, 1, pw, x=x, y=y)) / L
+}
+
+
 # Funtion for performing permutation test using sinkhorn divergence
-# Input:    x - sample 1, vector of size n
-#           y - sample 2, vector of size m
+# Input:    C - cost matrix of size 2n x 2n
 #           alpha - significance level, number between 0 and 1
 #           eps - regularization parameter, real number greater than 0
 #           del - convergence criteria, real number greater than 0
@@ -100,15 +152,9 @@ sinkhorn <- function(C, Cx, Cy, eps=1, del=0.01) {
 #             res - result of test, either 0 or 1
 #             stat - value of test statistic
 #             quant - quantile approximated by permutations
-sinkperm <- function(x, y, alph=.05, eps=1, del=0.01, N=1000) {
-  n <- NROW(x)
-  m <- NROW(y)
-  C <- cost_matrix(
-    rbind(x, y), 
-    rbind(x, y),
-    function(x, y) sqrt(sum((x-y)^2))
-    )
-  C <- C / max(C) # for stabilizing purposes (does not affect result)
+sinkperm <- function(C, alph=.05, eps=1, del=0.01, N=1000) {
+  n <- NROW(C) / 2
+  m <- n
   s <- sinkhorn(
     C[1:n, (n+1):(n+m)], 
     C[1:n, 1:n], 
@@ -126,10 +172,61 @@ sinkperm <- function(x, y, alph=.05, eps=1, del=0.01, N=1000) {
       del
       )
   }))
-  q <- quantile(sstar, 1-alph)
+  q <- quantile(c(sstar, s), 1-alph)
   r <- as.numeric(s >= q)
   out <- list(res=r, stat=s, quant=q)
   class(out) <- "SinkhornPermutationTest"
+  out
+}
+
+
+# Funtion for performing permutation test using 2-Wasserstein dist.
+# Input:    C - cost matrix of size n x n
+#           alpha - significance level, number between 0 and 1
+#           N - number of permutations
+# Output:   S3 class with the following attributes
+#             res - result of test, either 0 or 1
+#             stat - value of test statistic
+#             quant - quantile approximated by permutations
+wassperm <- function(C, alph=.05, N=1000) {
+  n <- NROW(C) / 2
+  m <- n
+  s <- wasser(C[1:n, (n+1):(n+m)])
+  perm <- lapply(numeric(N), function(i) sample(n+m, replace=FALSE))
+  sstar <- unlist(lapply(perm, function(p) {
+    wasser(C[p[1:n], p[(n+1):(n+m)]])
+  }))
+  q <- quantile(c(sstar, s), 1-alph)
+  r <- as.numeric(s >= q)
+  out <- list(res=r, stat=s, quant=q)
+  class(out) <- "WassersteinPermutationTest"
+  out
+}
+
+
+# Funtion for performing permutation test using sliced 2-Wasserstein dist.
+# Input:    x - n x d matrix
+#           y - n x d matrix
+#           L - number of projections
+#           alpha - significance level, number between 0 and 1
+#           N - number of permutations
+# Output:   S3 class with the following attributes
+#             res - result of test, either 0 or 1
+#             stat - value of test statistic
+#             quant - quantile approximated by permutations
+swperm <- function(x, y, L=1000, alph=.05, N=1000) {
+  n <- NROW(x)
+  m <- NROW(y)
+  s <- sliced_wasser(x, y, L)
+  z <- rbind(x, y)
+  perm <- lapply(numeric(N), function(i) sample(n + m, replace=FALSE))
+  sstar <- unlist(lapply(perm, function(p) {
+    sliced_wasser(z[p[1:n],], z[p[(n+1):(n+m)], ], L)
+  }))
+  q <- quantile(c(sstar, s), 1-alph)
+  r <- as.numeric(s >= q)
+  out <- list(res=r, stat=s, quant=q)
+  class(out) <- "SlicedWassersteinPermutationTest"
   out
 }
 
@@ -143,16 +240,20 @@ sinkperm <- function(x, y, alph=.05, eps=1, del=0.01, N=1000) {
 #             res - result of test, either 0 or 1
 #             stat - value of test statistic
 #             quant - quantile approximated by permutations
-mmdperm <- function(x, y, alph=.05, N=1000) {
+mmdperm <- function(x, y, ker="rbfdot", alph=.05, N=1000) {
   n <- NROW(x)
   m <- NROW(y)
-  invisible(capture.output(t <- mmdstats(kmmd(x, y))[2]))
+  xm <- as.matrix(x)
+  ym <- as.matrix(y)
+  invisible(capture.output(
+    t <- mmdstats(kmmd(xm, ym, kernel=ker))[2]
+  ))
   perm <- lapply(numeric(N), function(x) sample(n+m, replace=FALSE))
-  z <- rbind(x, y)
+  z <- rbind(xm, ym)
   tstar <- unlist(lapply(perm, function(p) {
-    mmdstats(kmmd(z[p[1:n],], z[p[(n+1):(n+m)],]))[2]
-    }))
-  q <- quantile(tstar, 1-alph)
+    mmdstats(kmmd(z[p[1:n],], z[p[(n+1):(n+m)],], kernel=ker))[2]
+  }))
+  q <- quantile(c(tstar, t), 1-alph)
   r <- as.numeric(t >= q)
   out <- list(res=r, stat=t, quant=q)
   class(out) <- "MMDPermutationTest"
@@ -160,37 +261,12 @@ mmdperm <- function(x, y, alph=.05, N=1000) {
 }
 
 
-# Function for processing the results in the third simulation experiment below.
-# Input:    res - a list of vectors of the size k
-# Output:   a 2 x (k-1) dataframe
-process_results <- function(res) {
-  k <- length(res[[1]])
-  res_mat <- matrix(unlist(res), ncol=k, byrow=TRUE)
-  res_same <- res_mat[res_mat[,k]==1, 1:(k-1)]
-  res_same <- res_same / NROW(res_same)
-  res_diff <- res_mat[res_mat[,k]==0, 1:(k-1)]
-  res_diff <- res_diff / NROW(res_diff)
-  res_out <- rbind(apply(res_same, 2, sum), apply(res_diff, 2, sum))
-  colnames(res_out) <- c(
-    "sinkhorn0.1", 
-    "sinkhorn1", 
-    "sinkhorn10", 
-    "sinkhorn100",
-    "sinkhorn1000",
-    "mmd"
-  )
-  rownames(res_out) <- c("same", "different")
-  res_out
-}
-
-
-
 # POWER: LOCATION
-# Fixed n=200
+# Fixed n=100
 # X ~ Gaussian with (0,0,...) mean and Id variance
 # Y ~ Gaussian with (1,0,...) mean and Id variance
 NSIM <- 100
-n <- 200
+n <- 100
 dseq <- seq(2, 2002, by=100)
 
 
@@ -199,17 +275,25 @@ test_wr <- function(dseq, n) {
   x <- mvrnorm(n, numeric(dmax), diag(dmax))
   y <- mvrnorm(n, c(1, numeric(dmax-1)), diag(dmax))
   run_test <- function(d) {
+    C <- cost_matrix(
+      rbind(x[, 1:d], y[, 1:d]), 
+      rbind(x[, 1:d], y[, 1:d]),
+      function(s, t) sum((s-t)^2)
+    )
+    C <- C / max(C) # for stabilizing purposes (does not affect result)
     c(
-      sinkperm(x[, 1:d], y[, 1:d], alph=.05, eps=0.1, N=500)$res,
-      sinkperm(x[, 1:d], y[, 1:d], alph=.05, eps=1, N=500)$res,
-      sinkperm(x[, 1:d], y[, 1:d], alph=.05, eps=10, N=500)$res,
-      sinkperm(x[, 1:d], y[, 1:d], alph=.05, eps=100, N=500)$res,
+      wassperm(C, alph=.05, N=500)$res,
+      swperm(x[, 1:d], y[, 1:d], L=1000, alph=.05, N=500)$res,
+      sinkperm(C, alph=.05, eps=0.1, N=500)$res,
+      sinkperm(C, alph=.05, eps=1, N=500)$res,
+      sinkperm(C, alph=.05, eps=10, N=500)$res,
+      sinkperm(C, alph=.05, eps=100, N=500)$res,
       mmdperm(x[, 1:d], y[, 1:d], alph=.05, N=500)$res
       )
   }
   matrix(
     unlist(mclapply(dseq, run_test, mc.cores=2)), 
-    ncol=5, 
+    ncol=7, 
     byrow=TRUE,
     )
 }
@@ -221,9 +305,11 @@ invisible(
       '+', 
       mclapply(1:NSIM, function(i) test_wr(dseq, n), mc.cores=20)
       ) / NSIM
-    )
   )
+)
 colnames(res) <- c(
+  "wasser",
+  "sw",
   "sinkhorn0.1", 
   "sinkhorn1", 
   "sinkhorn10", 
@@ -236,7 +322,7 @@ write.csv(res, row.names=TRUE)
 
 
 # POWER: SCALE
-# Fixed n=200
+# Fixed n=100
 # X ~ Gaussian with (0,0,...) mean and Id variance
 # Y ~ Gaussian with (0,0,...) mean and diag(4,0,0,...) variance
 NSIM <- 100
@@ -249,17 +335,25 @@ test_wr <- function(dseq, n) {
   x <- mvrnorm(n, numeric(dmax), diag(dmax))
   y <- mvrnorm(n, numeric(dmax), diag(c(4, rep(1, dmax-1))))
   run_test <- function(d) {
+    C <- cost_matrix(
+      rbind(x[, 1:d], y[, 1:d]), 
+      rbind(x[, 1:d], y[, 1:d]),
+      function(s, t) sum((s-t)^2)
+    )
+    C <- C / max(C) # for stabilizing purposes (does not affect result)
     c(
-      sinkperm(x[, 1:d], y[, 1:d], alph=.05, eps=0.1, N=500)$res,
-      sinkperm(x[, 1:d], y[, 1:d], alph=.05, eps=1, N=500)$res,
-      sinkperm(x[, 1:d], y[, 1:d], alph=.05, eps=10, N=500)$res,
-      sinkperm(x[, 1:d], y[, 1:d], alph=.05, eps=100, N=500)$res,
+      wassperm(C, alph=.05, N=500)$res,
+      swperm(x[, 1:d], y[, 1:d], L=1000, alph=.05, N=500)$res,
+      sinkperm(C, alph=.05, eps=0.1, N=500)$res,
+      sinkperm(C, alph=.05, eps=1, N=500)$res,
+      sinkperm(C, alph=.05, eps=10, N=500)$res,
+      sinkperm(C, alph=.05, eps=100, N=500)$res,
       mmdperm(x[, 1:d], y[, 1:d], alph=.05, N=500)$res
     )
   }
   matrix(
     unlist(mclapply(dseq, run_test, mc.cores=2)), 
-    ncol=5, 
+    ncol=7, 
     byrow=TRUE,
   )
 }
@@ -274,6 +368,8 @@ invisible(
   )
 )
 colnames(res) <- c(
+  "wasser",
+  "sw",
   "sinkhorn0.1", 
   "sinkhorn1", 
   "sinkhorn10", 
@@ -284,34 +380,59 @@ rownames(res) <- dseq
 write.csv(res, row.names=TRUE)
 
 
+# POWER: LOCATION
+# Fixed n=100
+# X ~ Laplacian with (0,0,...) mean and Id scale
+# Y ~ Laplacian with (1,0,...) mean and Id scale
+NSIM <- 100
+n <- 100
+dseq <- seq(2, 2002, by=100)
 
-# DATA INTEGRATION
-# We test the usefulness in data integration tasks for 3 different 
-# tumor microarray datasets
-test_wr <- function(dat) {
-  a <- sample(c(0, 1), 2, replace=TRUE)
-  x <- dat[dat["label"]==a[1],]
-  x <- as.matrix(x[sample(nrow(x), 10),])
-  y <- dat[dat["label"]==a[2],]
-  y <- as.matrix(y[sample(nrow(y), 10),])
-  c(
-    sinkperm(x, y, alph=.05, 0.1, N=500)$res,
-    sinkperm(x, y, alph=.05, 1, N=500)$res,
-    sinkperm(x, y, alph=.05, 10, N=500)$res,
-    sinkperm(x, y, alph=.05, 100, N=500)$res,
-    sinkperm(x, y, alph=.05, 1000, N=500)$res,
-    mmdperm(x, y, alph=.05, N=500)$res,
-    as.numeric(a[1]==a[2])
+test_wr <- function(dseq, n) {
+  dmax <- max(dseq)
+  x <- rmvl(n, numeric(dmax), diag(dmax))
+  y <- rmvl(n, c(1, numeric(dmax-1)), diag(dmax))
+  run_test <- function(d) {
+    C <- cost_matrix(
+      rbind(x[, 1:d], y[, 1:d]), 
+      rbind(x[, 1:d], y[, 1:d]),
+      function(s, t) sum((s-t)^2)
+    )
+    C <- C / max(C) # for stabilizing purposes (does not affect result)
+    c(
+      wassperm(C, alph=.05, N=500)$res,
+      swperm(x[, 1:d], y[, 1:d], L=1000, alph=.05, N=500)$res,
+      sinkperm(C, alph=.05, eps=0.1, N=500)$res,
+      sinkperm(C, alph=.05, eps=1, N=500)$res,
+      sinkperm(C, alph=.05, eps=10, N=500)$res,
+      sinkperm(C, alph=.05, eps=100, N=500)$res,
+      mmdperm(x[, 1:d], y[, 1:d], ker="laplacedot", alph=.05, N=500)$res
+    )
+  }
+  matrix(
+    unlist(mclapply(dseq, run_test, mc.cores=2)), 
+    ncol=7, 
+    byrow=TRUE,
   )
 }
 
-dat_names <- c("breast", "prostate", "dlbcl")
-for (n in dat_names) {
-  dat <- read.csv(paste0("./", n, ".csv"))
-  invisible(capture.output(
-    res <- process_results(
-      mclapply(1:300, function(i) test_wr(dat), mc.cores=40)
-      )
-    ))
-  write.csv(res, row.names=TRUE)
-}
+
+invisible(
+  capture.output(
+    res <- Reduce(
+      '+', 
+      mclapply(1:NSIM, function(i) test_wr(dseq, n), mc.cores=20)
+    ) / NSIM
+  )
+)
+colnames(res) <- c(
+  "wasser",
+  "sw",
+  "sinkhorn0.1", 
+  "sinkhorn1", 
+  "sinkhorn10", 
+  "sinkhorn100", 
+  "mmd"
+)
+rownames(res) <- dseq
+write.csv(res, row.names=TRUE)
